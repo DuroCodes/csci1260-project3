@@ -1,0 +1,194 @@
+@page "/"
+@using Project3.Models
+
+<div class="game-container">
+    @foreach (var player in _playerHands.Keys)
+    {
+        <div class="player-hand">
+            <h4>@player's Stack</h4>
+            <div class="current-card">
+                <img src="@((_topCards[player]?.ImagePath) ?? "images/card_back.png")" alt="@player's Card"/>
+            </div>
+            <p>@_playerHands[player].Cards.Count cards left</p>
+
+            @if (WarCardsVisible)
+            {
+                <h5>War Cards</h5>
+                <div class="war-cards">
+                    @foreach (var (card, isFaceUp) in _warCards[player])
+                    {
+                        <img src="@((isFaceUp ? card.ImagePath : "images/card_back.png"))" alt="War Card"/>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<div class="button-container">
+    <button @onclick="PlayRound" disabled="@IsGameOver">Play Round</button>
+</div>
+
+@if (RoundResult != null)
+{
+    <p class="round-result">@RoundResult</p>
+}
+
+@if (IsGameOver)
+{
+    <p class="game-over">@GameResult</p>
+}
+
+<label>
+    Number of Players:
+    <select @bind="PlayerCount">
+        @for (var i = 2; i <= 10; i++)
+        {
+            <option value="@i">@i</option>
+        }
+    </select>
+</label>
+
+@code {
+    private Deck _deck = null!;
+    private Dictionary<string, Hand> _playerHands = null!;
+    private Dictionary<string, Card?> _topCards = new();
+    private Dictionary<string, List<(Card Card, bool IsFaceUp)>> _warCards = new();
+    private bool WarCardsVisible { get; set; }
+    private string? RoundResult { get; set; }
+    private bool IsGameOver { get; set; }
+
+    private int _playerCount = 2;
+
+    private int PlayerCount
+    {
+        get => _playerCount;
+        set
+        {
+            if (_playerCount == value) return;
+            _playerCount = value;
+            ResetGame();
+        }
+    }
+
+    private IEnumerable<string> PlayerNames =>
+        Enumerable.Range(1, PlayerCount).Select(i => $"Player {i}");
+
+    private string GameResult
+    {
+        get
+        {
+            var remaining = _playerHands.Where(p => p.Value.Cards.Count > 0).ToList();
+            return remaining.Count == 1 ? $"{remaining[0].Key} wins!" : "It's a draw!";
+        }
+    }
+
+    protected override void OnInitialized() => ResetGame();
+
+    private void PlayRound()
+    {
+        if (IsGameOver) return;
+
+        WarCardsVisible = false;
+        RoundResult = null;
+
+        var playedCards = new Dictionary<string, Card>();
+
+        foreach (var (player, hand) in _playerHands)
+        {
+            if (hand.Cards.Count <= 0) continue;
+            var card = hand.Cards.Dequeue();
+            _topCards[player] = card;
+            playedCards[player] = card;
+        }
+
+        if (playedCards.Count <= 1)
+        {
+            IsGameOver = true;
+            return;
+        }
+
+        var highestCard = playedCards.Values.Max();
+        var winners = playedCards.Where(p => p.Value.CompareTo(highestCard) == 0).Select(p => p.Key).ToList();
+
+        if (winners.Count == 1)
+        {
+            var winner = winners[0];
+            foreach (var card in playedCards.Values)
+                _playerHands[winner].Cards.Enqueue(card);
+
+            RoundResult = $"{winner} won the round with {playedCards[winner]}!";
+        }
+        else HandleWar(playedCards, winners);
+
+        CheckGameOver();
+    }
+
+    private void HandleWar(Dictionary<string, Card> playedCards, List<string> warPlayers)
+    {
+        WarCardsVisible = true;
+        RoundResult = "WAR! ";
+
+        foreach (var player in _playerHands.Keys)
+            _warCards[player].Clear();
+
+        foreach (var player in warPlayers)
+            _warCards[player].Add((playedCards[player], true));
+
+        if (warPlayers.Any(p => _playerHands[p].Cards.Count < 4))
+        {
+            IsGameOver = true;
+            return;
+        }
+
+        var finalWarCards = new Dictionary<string, Card>();
+
+        foreach (var player in warPlayers)
+        {
+            for (var i = 0; i < 3; i++)
+                _warCards[player].Add((_playerHands[player].Cards.Dequeue(), false));
+
+            var finalCard = _playerHands[player].Cards.Dequeue();
+            _warCards[player].Add((finalCard, true));
+            finalWarCards[player] = finalCard;
+        }
+
+        var maxCard = finalWarCards.Values.Max();
+        var finalWinners = finalWarCards.Where(p => p.Value.CompareTo(maxCard) == 0).Select(p => p.Key).ToList();
+
+        var allWarCards = warPlayers.SelectMany(p => _warCards[p]).Select(w => w.Card);
+
+        if (finalWinners.Count == 1)
+        {
+            var winner = finalWinners[0];
+            foreach (var card in allWarCards)
+                _playerHands[winner].Cards.Enqueue(card);
+
+            RoundResult = $"{winner} won the war with {finalWarCards[winner]}!";
+        }
+        else RoundResult += "Another tie in war! War continues...";
+    }
+
+    private void CheckGameOver()
+    {
+        var playersWithCards = _playerHands.Count(p => p.Value.Cards.Count > 0);
+        IsGameOver = playersWithCards <= 1;
+    }
+
+    private void ResetGame()
+    {
+        _deck = new Deck(52);
+        _deck.Shuffle();
+
+        _playerHands = PlayerNames.ToDictionary(name => name, _ => new Hand(new Queue<Card>()));
+        _topCards = PlayerNames.ToDictionary(name => name, _ => (Card?)null);
+        _warCards = PlayerNames.ToDictionary(name => name, _ => new List<(Card Card, bool IsFaceUp)>());
+
+        _deck.DistributeCards(_playerHands);
+
+        WarCardsVisible = false;
+        IsGameOver = false;
+        RoundResult = null;
+    }
+
+}
